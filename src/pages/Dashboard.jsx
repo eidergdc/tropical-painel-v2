@@ -8,6 +8,7 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  Timestamp,
   serverTimestamp,
 } from 'firebase/firestore'
 import toast from 'react-hot-toast'
@@ -26,6 +27,33 @@ function formatDate(timestamp) {
   })
 }
 
+function toDateInputValue(timestamp) {
+  if (!timestamp?.toDate) return ''
+  const date = timestamp.toDate()
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function addMonthsToDate(baseDate, monthsToAdd) {
+  const source = new Date(baseDate)
+  const day = source.getDate()
+  const year = source.getFullYear()
+  const month = source.getMonth()
+
+  const targetMonthDate = new Date(year, month + monthsToAdd, 1)
+  const lastDayOfTargetMonth = new Date(
+    targetMonthDate.getFullYear(),
+    targetMonthDate.getMonth() + 1,
+    0
+  ).getDate()
+
+  targetMonthDate.setDate(Math.min(day, lastDayOfTargetMonth))
+  targetMonthDate.setHours(0, 0, 0, 0)
+  return targetMonthDate
+}
+
 export default function Dashboard() {
   const [tab, setTab] = useState(tabDevices)
   const [devices, setDevices] = useState([])
@@ -38,6 +66,9 @@ export default function Dashboard() {
   const [deviceForm, setDeviceForm] = useState({
     userNumber: '',
     paymentStatus: false,
+    expiresAt: '',
+    expiryUpdateMode: 'keep',
+    expiryMonths: '1',
     lists: [],
   })
   const [savingDevice, setSavingDevice] = useState(false)
@@ -103,6 +134,9 @@ export default function Dashboard() {
     setDeviceForm({
       userNumber: device.userNumber || '',
       paymentStatus: device.paymentStatus ?? false,
+      expiresAt: toDateInputValue(device.expiresAt),
+      expiryUpdateMode: 'keep',
+      expiryMonths: '1',
       lists: (device.lists || []).map((l) => ({ ...l })),
     })
   }
@@ -112,6 +146,9 @@ export default function Dashboard() {
     setDeviceForm({
       userNumber: '',
       paymentStatus: false,
+      expiresAt: '',
+      expiryUpdateMode: 'keep',
+      expiryMonths: '1',
       lists: [],
     })
   }
@@ -147,6 +184,21 @@ export default function Dashboard() {
       }
 
       if (editingDevice) {
+        if (deviceForm.expiryUpdateMode === 'manual') {
+          if (!deviceForm.expiresAt) {
+            toast.error('Informe a data de vencimento manualmente.')
+            setSavingDevice(false)
+            return
+          }
+          payload.expiresAt = Timestamp.fromDate(
+            new Date(`${deviceForm.expiresAt}T00:00:00`)
+          )
+        } else if (deviceForm.expiryUpdateMode === 'months') {
+          const currentExpiresAt = editingDevice.expiresAt?.toDate?.() || new Date()
+          const monthsToAdd = Number(deviceForm.expiryMonths || '1')
+          const nextExpiresAt = addMonthsToDate(currentExpiresAt, monthsToAdd)
+          payload.expiresAt = Timestamp.fromDate(nextExpiresAt)
+        }
         await updateDoc(doc(db, 'devices', editingDevice.id), payload)
         toast.success('Dispositivo atualizado')
       } else {
@@ -351,6 +403,72 @@ export default function Dashboard() {
                         <option value="true">Pago</option>
                       </select>
                     </div>
+                    {editingDevice && (
+                      <>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-gray-700">
+                            Atualização do Vencimento
+                          </label>
+                          <select
+                            value={deviceForm.expiryUpdateMode}
+                            onChange={(e) =>
+                              setDeviceForm((f) => ({
+                                ...f,
+                                expiryUpdateMode: e.target.value,
+                              }))
+                            }
+                            className="input-field"
+                          >
+                            <option value="keep">Não alterar vencimento</option>
+                            <option value="months">Adicionar meses</option>
+                            <option value="manual">Editar data manualmente</option>
+                          </select>
+                        </div>
+
+                        {deviceForm.expiryUpdateMode === 'months' && (
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-gray-700">
+                              Quantidade de meses para adicionar
+                            </label>
+                            <select
+                              value={deviceForm.expiryMonths}
+                              onChange={(e) =>
+                                setDeviceForm((f) => ({
+                                  ...f,
+                                  expiryMonths: e.target.value,
+                                }))
+                              }
+                              className="input-field"
+                            >
+                              {Array.from({ length: 12 }, (_, i) => String(i + 1)).map((month) => (
+                                <option key={month} value={month}>
+                                  {month} {month === '1' ? 'mês' : 'meses'}
+                                </option>
+                              ))}
+                            </select>
+                            <p className="mt-1 text-xs text-gray-500">
+                              Para mais de 12 meses, use a opção "Editar data manualmente".
+                            </p>
+                          </div>
+                        )}
+
+                        {deviceForm.expiryUpdateMode === 'manual' && (
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-gray-700">
+                              Data de Vencimento
+                            </label>
+                            <input
+                              type="date"
+                              value={deviceForm.expiresAt || ''}
+                              onChange={(e) =>
+                                setDeviceForm((f) => ({ ...f, expiresAt: e.target.value }))
+                              }
+                              className="input-field"
+                            />
+                          </div>
+                        )}
+                      </>
+                    )}
                     <div className="space-y-4">
                       <h3 className="text-lg font-medium text-gray-900">Listas M3U</h3>
                       <p className="text-sm text-gray-500">
